@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Saans — school air-safety backend. FastAPI on Lambda (via Mangum) behind an
+  HTTP API, DynamoDB school store, daily 05:30 IST bulletin schedule, SNS alerts.
+
+Parameters:
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: >-
+      Gemini API key for the Strands agent. Optional — without it the agent
+      endpoint runs in transparent rule-based fallback mode.
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        GEMINI_API_KEY: !Ref GeminiApiKey
+
+Resources:
+  # ---------------------------------------------------------- HTTP API
+  SaansApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: ["*"]
+        AllowHeaders: ["*"]
+
+  # ---------------------------------------------------------- Lambda
+  SaansFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: app.handler.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SchoolsTable
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt AlertsTopic.TopicName
+      Events:
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SaansApi
+            Path: /{proxy+}
+            Method: "*"
+        DailyBulletin:
+          Type: ScheduleV2
+          Properties:
+            Description: Morning school bulletins, 05:30 Asia/Kolkata daily
+            ScheduleExpression: "cron(30 5 * * ? *)"
+            ScheduleExpressionTimezone: "Asia/Kolkata"
+            FlexibleTimeWindow:
+              Mode: "OFF"
+            # The handler branches on the aws.events source and fans out
+            # bulletins for every registered school.
+
+  # ---------------------------------------------------------- storage
+  SchoolsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: saans-schools
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  # ---------------------------------------------------------- alerts
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: saans-alerts
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the Saans HTTP API
+    Value: !Sub "https://${SaansApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+  SchoolsTableName:
+    Value: !Ref SchoolsTable
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
