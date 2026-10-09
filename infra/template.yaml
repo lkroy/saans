@@ -15,14 +15,11 @@ Parameters:
 
 Globals:
   Function:
-    Runtime: python3.11
+    Runtime: python3.12
     Timeout: 30
     MemorySize: 512
     Architectures:
       - x86_64
-    Environment:
-      Variables:
-        GEMINI_API_KEY: !Ref GeminiApiKey
 
 Resources:
   # ---------------------------------------------------------- HTTP API
@@ -38,8 +35,13 @@ Resources:
   SaansFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: ../backend/
+      CodeUri: ./build/backend/
       Handler: app.handler.handler
+      Environment:
+        Variables:
+          SCHOOLS_TABLE: !Ref SchoolsTable
+          ALERTS_TOPIC_ARN: !Ref AlertsTopic
+          GEMINI_API_KEY: !Ref GeminiApiKey
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SchoolsTable
