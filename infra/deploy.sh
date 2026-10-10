@@ -23,6 +23,10 @@ cd "$ROOT"
 sam build --region "$REGION"
 
 echo "==> sam deploy (stack: $STACK, region: $REGION)..."
+PARAMS=()
+if [ -n "${GEMINI_API_KEY:-}" ]; then
+  PARAMS+=(--parameter-overrides "GeminiApiKey=${GEMINI_API_KEY}")
+fi
 sam deploy \
   --stack-name "$STACK" \
   --region "$REGION" \
@@ -30,7 +34,7 @@ sam deploy \
   --resolve-s3 \
   --no-confirm-changeset \
   --no-fail-on-empty-changeset \
-  --parameter-overrides "GeminiApiKey=${GEMINI_API_KEY:-}"
+  "${PARAMS[@]}"
 
 echo "==> Done. API URL:"
 aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" \
