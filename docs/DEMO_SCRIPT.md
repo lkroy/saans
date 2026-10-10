@@ -12,13 +12,15 @@ bold lines. Total: ~3:00.
 
 ## 0:20–1:00 — Dashboard (live data)
 - Open the app (Patna loads by default). Point at the gauge:
-> "Live AQI for Patna right now — **170, Moderate**, driven by PM2.5. This is
+> "Live AQI for Patna right now — **[read the number and category off the
+> gauge]**, driven by [dominant pollutant]. This is
 > real data, pulled live from the Open-Meteo air quality API, scored on India's
 > official CPCB scale."
 - Scroll to the 48-hour forecast chart:
-> "And here's the next 48 hours — you can see tomorrow evening tipping into
-> **Poor**. The advisory banner turns that into a plain-language call, and these
-> are the cleanest windows to schedule outdoor PT."
+> "And here's the next 48 hours — you can see the peak hours tipping into
+> **[read the worst category on the chart]**. The advisory banner turns that
+> into a plain-language call, and these are the cleanest windows to schedule
+> outdoor PT."
 
 ## 1:00–1:40 — Schools (the bulletin)
 - Go to Schools, add "NIT Patna Model School", open its bulletin:
