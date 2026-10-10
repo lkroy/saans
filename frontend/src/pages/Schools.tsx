@@ -276,7 +276,95 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
           </p>
         </article>
       )}
+
+      {bulletin && <SubscribePanel schoolId={school.id} />}
     </div>
+  );
+}
+
+/* ---------------- SMS/email bulletin subscriptions ---------------- */
+
+function SubscribePanel({ schoolId }: { schoolId: string }) {
+  const [channel, setChannel] = useState<'sms' | 'email'>('sms');
+  const [target, setTarget] = useState('');
+  const [subs, setSubs] = useState<School['subscriptions']>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getSchool(schoolId).then((s) => setSubs(s.subscriptions ?? [])).catch(() => {});
+  }, [schoolId]);
+
+  const submit = async () => {
+    if (!target.trim() || busy) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.subscribe(schoolId, channel, target.trim());
+      setSubs((prev) => [...(prev ?? []).filter((s) => !(s.channel === r.subscription.channel && s.target === r.subscription.target)), r.subscription]);
+      setMsg({ ok: true, text: r.note });
+      setTarget('');
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : 'Subscription failed. Please try again.' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="no-print rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+        Get the 5:30 AM bulletin by text
+      </h2>
+      <p className="mt-1 text-sm text-slate-600">
+        The principal gets this bulletin as an SMS or email every morning at 5:30 AM — no app to open.
+      </p>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {(['sms', 'email'] as const).map((c) => (
+          <button
+            key={c}
+            onClick={() => { setChannel(c); setMsg(null); }}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold ${channel === c ? 'bg-ink text-white' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'}`}
+          >
+            {c === 'sms' ? 'SMS' : 'Email'}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+        <input
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          placeholder={channel === 'sms' ? '10-digit mobile number' : 'Email address'}
+          inputMode={channel === 'sms' ? 'tel' : 'email'}
+          className="flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-sm shadow-sm focus:border-ink focus:outline-none"
+        />
+        <button
+          onClick={submit}
+          disabled={busy || !target.trim()}
+          className="rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-40"
+        >
+          {busy ? 'Subscribing…' : 'Subscribe'}
+        </button>
+      </div>
+
+      {msg && (
+        <p className={`mt-3 text-sm ${msg.ok ? 'text-emerald-700' : 'text-red-600'}`}>{msg.text}</p>
+      )}
+
+      {(subs ?? []).length > 0 && (
+        <ul className="mt-4 space-y-1.5">
+          {(subs ?? []).map((s, i) => (
+            <li key={i} className="flex items-center gap-2 text-sm text-slate-600">
+              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-bold uppercase text-slate-500">{s.channel}</span>
+              <span className="font-medium text-ink">{s.target}</span>
+              <span className="text-xs text-slate-400">· {s.status.replace(/_/g, ' ')}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

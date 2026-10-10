@@ -18,6 +18,7 @@ import CitySearch from '../components/CitySearch';
 import AQIGauge from '../components/AQIGauge';
 import PollutantCard from '../components/PollutantCard';
 import AdvisoryBanner from '../components/AdvisoryBanner';
+import WindCard from '../components/WindCard';
 import BestWindows from '../components/BestWindows';
 import AlertList from '../components/AlertList';
 import { DashboardSkeleton, ErrorState } from '../components/Feedback';
@@ -207,6 +208,8 @@ export default function Dashboard() {
       </div>
 
       <AdvisoryBanner call={advisory.call} />
+
+      <WindCard wind={advisory.wind} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

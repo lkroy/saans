@@ -33,10 +33,35 @@ def _is_scheduled_event(event):
 def _publish_sns(bulletin: dict):
     import boto3
 
+    win = (bulletin["best_windows"] or [None])[0]
+    win_txt = (f"Cleanest {win['start'][11:16]}-{win['end'][11:16]}"
+               if win else "No clean window today")
+    first_action = (bulletin["checklist"] or [""])[0]
+
+    sms_text = (
+        f"Saans {bulletin['level'].upper()} day, {bulletin['school']}: "
+        f"AQI {bulletin['aqi_now']} ({bulletin['category']}). "
+        f"{win_txt}. {first_action}"
+    )[:300]
+
+    email_text = (
+        f"Saans morning bulletin — {bulletin['school']} ({bulletin.get('city', '')})\n\n"
+        f"{bulletin['headline']}\n{bulletin['detail']}\n\n"
+        f"AQI now: {bulletin['aqi_now']} ({bulletin['category']})\n"
+        f"Today's peak: AQI {bulletin['peak_today']['aqi']} at {bulletin['peak_today']['at'][11:16]}\n"
+        f"{win_txt}\n\nChecklist:\n"
+        + "\n".join(f"- {c}" for c in bulletin["checklist"])
+    )
+
     boto3.client("sns").publish(
         TopicArn=_TOPIC_ARN,
         Subject=f"Saans bulletin: {bulletin['school']} — {bulletin['level'].upper()}",
-        Message=json.dumps(bulletin, indent=2, default=str),
+        Message=json.dumps({
+            "default": email_text,
+            "sms": sms_text,
+            "email": email_text,
+        }),
+        MessageStructure="json",
     )
 
 
@@ -54,6 +79,7 @@ def _run_daily_bulletins():
                 "headline": adv["headline"],
                 "detail": adv["detail"],
                 "aqi_now": adv["aqi_now"],
+                "category": adv["category"],
                 "peak_today": adv["peak_today"],
                 "best_windows": adv["best_windows"],
                 "checklist": adv["checklist"],

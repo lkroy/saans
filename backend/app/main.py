@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+import os
+
 from . import advisory, agent, data, stores
 from .data import AQServiceError, IST
 
@@ -114,6 +116,7 @@ def get_advisory(lat: float = Query(..., ge=-90, le=90),
         "aqi_now": adv["aqi_now"],
         "peak_6h": adv["peak_6h"],
         "best_windows": adv["best_windows"],
+        "wind": adv["wind"],
         "generated_at": adv["generated_at"],
     }
 
@@ -135,6 +138,86 @@ def create_school(body: SchoolIn):
 @app.get("/api/schools")
 def list_schools():
     return {"schools": stores.list_all()}
+
+
+@app.get("/api/schools/{school_id}")
+def get_school(school_id: str):
+    school = stores.get(school_id)
+    if not school:
+        raise HTTPException(404, "School not found")
+    return school
+
+
+class SubscriptionIn(BaseModel):
+    channel: str = Field(..., pattern="^(sms|email)$")
+    target: str = Field(..., min_length=3)
+
+
+def _normalize_sms(target: str) -> str:
+    """Normalize an Indian phone number to E.164 (+91XXXXXXXXXX)."""
+    import re
+    digits = re.sub(r"\D", "", target)
+    if target.strip().startswith("+"):
+        e164 = "+" + digits
+    elif len(digits) == 10:
+        e164 = "+91" + digits
+    elif len(digits) == 12 and digits.startswith("91"):
+        e164 = "+" + digits
+    else:
+        raise HTTPException(422, "Enter a valid 10-digit mobile number")
+    return e164
+
+
+@app.post("/api/schools/{school_id}/subscriptions", status_code=201)
+def subscribe_school(school_id: str, body: SubscriptionIn):
+    """Subscribe a phone (SMS) or email to this school's bulletin alerts.
+
+    Uses the SNS alerts topic when configured (AWS deploy). The subscriber
+    gets a confirmation text/email to opt in — required before delivery.
+    """
+    school = stores.get(school_id)
+    if not school:
+        raise HTTPException(404, "School not found")
+
+    target = body.target.strip()
+    if body.channel == "sms":
+        target = _normalize_sms(target)  # 422 on bad numbers, before any AWS call
+        protocol = "SMS"
+    else:
+        if "@" not in target:
+            raise HTTPException(422, "Enter a valid email address")
+        protocol = "email"
+
+    topic = os.environ.get("ALERTS_TOPIC_ARN")
+    if not topic:
+        raise HTTPException(
+            503, "Alert subscriptions need the AWS deploy (SNS topic not configured)")
+
+    import boto3
+    sns = boto3.client("sns")
+    try:
+        resp = sns.subscribe(TopicArn=topic, Protocol=protocol,
+                             Endpoint=target, ReturnSubscriptionArn=True)
+    except Exception as exc:
+        raise HTTPException(502, f"SNS subscription failed: {exc}")
+
+    sub = {
+        "channel": body.channel,
+        "target": target,
+        "arn": resp.get("SubscriptionArn", "pending"),
+        "status": "pending_confirmation",
+    }
+    subs = school.setdefault("subscriptions", [])
+    subs[:] = [s for s in subs
+               if not (s.get("channel") == sub["channel"]
+                       and s.get("target") == sub["target"])]
+    subs.append(sub)
+    stores.upsert(school)
+    return {
+        "subscription": sub,
+        "note": ("Confirm via the text/email just sent to start receiving "
+                 "the 5:30 AM bulletin."),
+    }
 
 
 @app.delete("/api/schools/{school_id}")

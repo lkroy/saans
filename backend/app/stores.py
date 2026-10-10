@@ -82,3 +82,13 @@ def delete(school_id):
         resp = table.delete_item(Key={"id": school_id}, ReturnValues="ALL_OLD")
         return "Attributes" in resp
     return _schools.pop(school_id, None) is not None
+
+
+def upsert(school):
+    """Write a full school record (used after mutating subscriptions)."""
+    table = _table()
+    if table is not None:
+        table.put_item(Item=_to_ddb(school))
+    else:
+        _schools[school["id"]] = school
+    return school

@@ -89,6 +89,13 @@ Resources:
             TableName: !Ref SchoolsTable
         - SNSPublishMessagePolicy:
             TopicName: !GetAtt AlertsTopic.TopicName
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - sns:Subscribe
+                - sns:ListSubscriptionsByTopic
+              Resource: !Ref AlertsTopic
       Events:
         DailyBulletin:
           Type: ScheduleV2

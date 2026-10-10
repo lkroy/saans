@@ -22,6 +22,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
+WX_URL = "https://api.open-meteo.com/v1/forecast"
 HOURLY_VARS = "pm2_5,pm10,ozone,nitrogen_dioxide,sulphur_dioxide,carbon_monoxide"
 TTL_SECONDS = 600  # 10-minute cache
 
@@ -174,3 +175,44 @@ def search_places(query, limit=8):
         "lat": r.get("latitude"),
         "lon": r.get("longitude"),
     } for r in results]
+
+
+def fetch_wind(lat, lon):
+    """Hourly wind speed (km/h) + direction (degrees) for a location.
+
+    Uses the free Open-Meteo forecast API (no key). Returns dict with
+    ``speed`` and ``direction`` lists aligned to hourly slots, plus the
+    current-hour index. Never raises for missing values (None entries);
+    raises AQServiceError only if the upstream call itself fails.
+    """
+    key = ("wind", round(float(lat), 2), round(float(lon), 2))
+    now = time.time()
+    cached = _cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    payload = _http_get(WX_URL, {
+        "latitude": key[1],
+        "longitude": key[2],
+        "hourly": "wind_speed_10m,wind_direction_10m",
+        "wind_speed_unit": "kmh",
+        "timezone": "auto",
+        "forecast_days": 2,
+    })
+    hourly = payload.get("hourly") or {}
+    tz_name = payload.get("timezone", "Asia/Kolkata")
+    raw_times = hourly.get("time") or []
+    if not raw_times:
+        raise AQServiceError("Upstream data source returned no wind data")
+
+    def _floats(vals):
+        return [None if v is None else float(v) for v in (vals or [])]
+
+    data = {
+        "times": [_localize(t, tz_name) for t in raw_times],
+        "speed": _floats(hourly.get("wind_speed_10m")),
+        "direction": _floats(hourly.get("wind_direction_10m")),
+        "current_idx": _current_index(raw_times, tz_name),
+    }
+    _cache[key] = (now + TTL_SECONDS, data)
+    return data

@@ -69,7 +69,24 @@ export interface AdvisoryResponse {
   aqi_now: number;
   peak_6h: { aqi: number; at: string };
   best_windows: BestWindow[];
+  wind: WindStory | null;
   generated_at: string;
+}
+
+export interface WindStory {
+  direction: string;
+  direction_label: string;
+  degrees: number;
+  speed_kmh: number;
+  headline: string;
+  detail: string;
+}
+
+export interface Subscription {
+  channel: 'sms' | 'email';
+  target: string;
+  arn: string;
+  status: string;
 }
 
 export interface AlertItem {
@@ -87,6 +104,7 @@ export interface School {
   lon: number;
   contact?: string;
   created_at: string;
+  subscriptions?: Subscription[];
 }
 
 export interface Bulletin {
@@ -190,6 +208,15 @@ export const api = {
   },
   bulletin(id: string): Promise<Bulletin> {
     return request<Bulletin>(`/api/schools/${id}/bulletin`);
+  },
+  getSchool(id: string): Promise<School> {
+    return request<School>(`/api/schools/${id}`);
+  },
+  subscribe(id: string, channel: 'sms' | 'email', target: string): Promise<{ subscription: Subscription; note: string }> {
+    return request<{ subscription: Subscription; note: string }>(`/api/schools/${id}/subscriptions`, {
+      method: 'POST',
+      body: JSON.stringify({ channel, target }),
+    });
   },
   chat(message: string, lat: number, lon: number, history: ChatMessage[]): Promise<ChatResponse> {
     return request<ChatResponse>('/api/agent/chat', {

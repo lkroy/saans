@@ -50,9 +50,17 @@ School-day advisory for the location.
   "aqi_now": 187,
   "peak_6h": {"aqi": 214, "at": "2026-10-10T08:00:00+05:30"},
   "best_windows": [{"start": "…", "end": "…", "label": "Cleanest window today", "aqi": 96}],
+  "wind": {
+    "direction": "NW", "direction_label": "northwest", "degrees": 315,
+    "speed_kmh": 14,
+    "headline": "Northwesterlies are carrying stubble smoke across the plains.",
+    "detail": "…"
+  },
   "generated_at": "…"
 }
 ```
+`wind` is null when wind data is unavailable. Direction is the compass sector the
+wind blows FROM. In Oct–Nov, NW/W/N winds trigger the stubble-season note.
 Call logic (max of current AQI and 6h forecast peak):
 - ≤100 → `clear`: "All clear — normal outdoor schedule."
 - 101–200 → `caution`: "Caution — shorten strenuous outdoor activity; sensitive children stay in."
@@ -72,6 +80,17 @@ Body: `{"name": "…", "city": "Patna", "lat": 25.59, "lon": 85.13, "contact": "
 
 ### GET /api/schools
 → `{"schools": [ …same shape… ]}`
+
+### GET /api/schools/{id}
+→ single school, including `subscriptions: [{channel, target, arn, status}]`
+
+### POST /api/schools/{id}/subscriptions
+Body: `{"channel": "sms|email", "target": "+919876543210 or name@example.com"}`
+Subscribes the target to the school's bulletin via the SNS alerts topic (AWS
+deploy only — 503 locally). Phone numbers are normalized to E.164 (+91…).
+SNS sends a confirmation text/email that must be accepted before delivery.
+→ `{"subscription": {"channel": "sms", "target": "+919876543210", "arn": "…", "status": "pending_confirmation"}, "note": "…"}`
+422 on bad phone/email, 404 on unknown school.
 
 ### DELETE /api/schools/{id}
 → `{"deleted": true}`
