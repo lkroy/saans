@@ -53,6 +53,7 @@ export interface ForecastResponse {
 
 export interface AdvisoryCall {
   level: CallLevel;
+  label: string;
   headline: string;
   detail: string;
 }
@@ -64,13 +65,39 @@ export interface BestWindow {
   aqi: number;
 }
 
+export interface Evidence {
+  rule: string;
+  reference_aqi: number;
+  current_aqi: number;
+  current_category: string;
+  forecast_peak_6h: { aqi: number; at: string };
+  dominant_pollutant: string;
+  pollutant_concentrations: Record<string, number>;
+  period: string;
+  source: string;
+  data_status: string;
+  data_age_min: number;
+  stale: boolean;
+  limitations: string[];
+}
+
 export interface AdvisoryResponse {
   call: AdvisoryCall;
   aqi_now: number;
+  category: string;
   peak_6h: { aqi: number; at: string };
   best_windows: BestWindow[];
+  windows_note: string | null;
+  evidence: Evidence;
   wind: WindStory | null;
   generated_at: string;
+  source: string;
+  data_status: string;
+  demo?: boolean;
+  demo_scenario?: string;
+  alerts?: AlertItem[];
+  color?: string;
+  dominant?: string;
 }
 
 export interface WindStory {
@@ -103,8 +130,18 @@ export interface School {
   lat: number;
   lon: number;
   contact?: string;
+  hours?: { start: string; end: string };
+  days?: number[];
+  pt_duration_min?: number;
   created_at: string;
   subscriptions?: Subscription[];
+}
+
+export interface ActivityPlan {
+  recommendation: 'outdoor_slot' | 'indoor';
+  activity: string;
+  slot: { start: string; end: string; aqi: number } | null;
+  reason: string;
 }
 
 export interface Bulletin {
@@ -113,10 +150,30 @@ export interface Bulletin {
   call: AdvisoryCall;
   aqi_now: number;
   category: Category;
+  color: string;
+  dominant: string;
   peak_today: { aqi: number; at: string };
   best_windows: BestWindow[];
+  windows_note: string | null;
+  activity_plan: ActivityPlan;
   checklist: string[];
+  disclaimer: string;
+  evidence: Evidence;
   generated_at: string;
+  source: string;
+  data_status: string;
+  lang: string;
+  strings?: Record<string, string>;
+}
+
+export interface ActionRecord {
+  date: string;
+  action: string;
+  label: string;
+  recorded_by: string;
+  reason: string | null;
+  advisory_version: string | null;
+  recorded_at: string;
 }
 
 export type ChatRole = 'user' | 'assistant';
@@ -191,8 +248,9 @@ export const api = {
   forecast(lat: number, lon: number, hours = 48): Promise<ForecastResponse> {
     return request<ForecastResponse>(`/api/aqi/forecast?lat=${lat}&lon=${lon}&hours=${hours}`);
   },
-  advisory(lat: number, lon: number): Promise<AdvisoryResponse> {
-    return request<AdvisoryResponse>(`/api/advisory?lat=${lat}&lon=${lon}`);
+  advisory(lat: number, lon: number, demo?: string): Promise<AdvisoryResponse> {
+    const q = demo ? `&demo=${encodeURIComponent(demo)}` : '';
+    return request<AdvisoryResponse>(`/api/advisory?lat=${lat}&lon=${lon}${q}`);
   },
   alerts(lat: number, lon: number): Promise<{ alerts: AlertItem[] }> {
     return request<{ alerts: AlertItem[] }>(`/api/alerts?lat=${lat}&lon=${lon}`);
@@ -200,17 +258,36 @@ export const api = {
   listSchools(): Promise<{ schools: School[] }> {
     return request<{ schools: School[] }>('/api/schools');
   },
-  addSchool(body: { name: string; city: string; lat: number; lon: number; contact?: string }): Promise<School> {
-    return request<School>('/api/schools', { method: 'POST', body: JSON.stringify(body) });
-  },
   deleteSchool(id: string): Promise<{ deleted: boolean }> {
     return request<{ deleted: boolean }>(`/api/schools/${id}`, { method: 'DELETE' });
   },
-  bulletin(id: string): Promise<Bulletin> {
-    return request<Bulletin>(`/api/schools/${id}/bulletin`);
+  bulletin(id: string, lang = 'en'): Promise<Bulletin> {
+    return request<Bulletin>(`/api/schools/${id}/bulletin?lang=${lang}`);
   },
   getSchool(id: string): Promise<School> {
     return request<School>(`/api/schools/${id}`);
+  },
+  addSchool(body: {
+    name: string; city: string; lat: number; lon: number; contact?: string;
+    hours?: { start: string; end: string }; days?: number[]; pt_duration_min?: number;
+  }): Promise<School> {
+    return request<School>('/api/schools', { method: 'POST', body: JSON.stringify(body) });
+  },
+  recordAction(id: string, action: string, recorded_by: string, reason?: string): Promise<{ action: ActionRecord; created: boolean; action_types: Record<string, string> }> {
+    return request(`/api/schools/${id}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ action, recorded_by, reason }),
+    });
+  },
+  actionHistory(id: string, date?: string): Promise<{ school_id: string; date: string | null; actions: ActionRecord[]; action_types: Record<string, string> }> {
+    const q = date ? `?date=${date}` : '';
+    return request(`/api/schools/${id}/actions${q}`);
+  },
+  planActivity(id: string, activity: string, duration_min?: number, preferred?: 'morning' | 'afternoon'): Promise<ActivityPlan & { generated_at: string; data_status: string }> {
+    return request(`/api/schools/${id}/plan`, {
+      method: 'POST',
+      body: JSON.stringify({ activity, duration_min, preferred }),
+    });
   },
   subscribe(id: string, channel: 'sms' | 'email', target: string): Promise<{ subscription: Subscription; note: string }> {
     return request<{ subscription: Subscription; note: string }>(`/api/schools/${id}/subscriptions`, {

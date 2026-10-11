@@ -74,14 +74,16 @@ export default function Methodology() {
           </li>
           <li className="flex gap-2.5">
             <span className="font-extrabold text-ink">2.</span>
-            Map it to a call: ≤100 → <em>All clear</em>; 101–200 → <em>Caution</em> (shorten strenuous outdoor
-            activity; sensitive children stay in); 201–300 → <em>Indoor day</em> (PT and sports indoors, windows
-            closed); 301+ → <em>Severe</em> (indoor day, masks for commute, consider remote classes).
+            Map it to a school-day call: ≤100 → <em>All clear</em>; 101–200 → <em>Caution advised</em>;
+            201–300 → <em>Indoor day</em>; 301+ → <em>Emergency day</em>. These call names are
+            deliberately different from CPCB pollution categories (CPCB "Severe" starts at 401) —
+            a school action is not a pollution category.
           </li>
           <li className="flex gap-2.5">
             <span className="font-extrabold text-ink">3.</span>
-            Scan the next 24 hours for up to two contiguous low-AQI windows (≥2 hours each) and surface them as the
-            day's best outdoor windows.
+            Scan upcoming hours inside the school's operating hours and days for low-AQI windows
+            (AQI ≤ 100) long enough for a typical activity. If none fit, the app says so plainly
+            instead of recommending a polluted period.
           </li>
           <li className="flex gap-2.5">
             <span className="font-extrabold text-ink">4.</span>
@@ -103,12 +105,14 @@ export default function Methodology() {
             spikes read higher than official daily AQI.
           </li>
           <li>
-            <span className="font-semibold text-ink">Not medical advice.</span> The advisory is a planning aid. Children
-            with asthma or other conditions should follow their doctor's action plan regardless of the call.
+            <span className="font-semibold text-ink">Not medical advice, not a closure order.</span> The advisory is a
+            planning aid. Children with asthma or other conditions should follow their doctor's action plan
+            regardless of the call, and schools should follow their board and local authorities for closures.
           </li>
           <li>
-            <span className="font-semibold text-ink">School store is in-memory for the demo.</span> Registered schools
-            reset when the backend restarts; the production design persists them in DynamoDB.
+            <span className="font-semibold text-ink">School store is persistent.</span> Registered schools, alert
+            subscriptions, teacher action logs and bulletin state are stored in Amazon DynamoDB — they survive
+            backend restarts.
           </li>
         </ul>
       </section>
@@ -126,23 +130,24 @@ export default function Methodology() {
             grounds every claim in tool output. If no model key is configured, the API transparently serves the
             rule-based fallback from the same advisory engine — and says so in the UI badge.
           </p>
-          <p className="font-semibold text-ink">Production deploy design (SAM):</p>
+          <p className="font-semibold text-ink">Live AWS deployment (SAM, ap-southeast-2):</p>
           <ul className="list-disc space-y-1.5 pl-5">
             <li>
-              <span className="font-semibold">AWS Lambda + API Gateway</span> (via SAM) serving the FastAPI app —
-              search, AQI, forecast, advisory, alerts, schools, and the agent chat endpoint.
+              <span className="font-semibold">AWS Lambda + API Gateway</span> serving the FastAPI app —
+              search, AQI, forecast, advisory, alerts, schools, bulletins, activity planner, teacher
+              action log, and the agent chat endpoint.
             </li>
             <li>
-              <span className="font-semibold">Amazon DynamoDB</span> for the registered-schools store (replacing the
-              demo in-memory store).
+              <span className="font-semibold">Amazon DynamoDB</span> persists registered schools, alert
+              subscriptions, teacher acknowledgements and bulletin state.
             </li>
             <li>
-              <span className="font-semibold">Amazon EventBridge</span> scheduled rule each morning generating
-              bulletins for every registered school.
+              <span className="font-semibold">Amazon EventBridge Scheduler</span> fires a daily 5:30 AM IST run
+              generating bulletins for every registered school.
             </li>
             <li>
-              <span className="font-semibold">Amazon SNS</span> pushing severe-air alerts to school contacts by
-              SMS/email when thresholds are crossed.
+              <span className="font-semibold">Amazon SNS</span> delivers bulletins and material-change alerts to
+              subscribed phones (SMS) and emails — with an opt-in confirmation step before delivery.
             </li>
           </ul>
         </div>

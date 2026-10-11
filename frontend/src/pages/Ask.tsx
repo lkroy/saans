@@ -24,11 +24,11 @@ function AgentBadge({ agent }: { agent: 'strands' | 'fallback' }) {
       title={
         isStrands
           ? 'Answered by the Strands agent with live AQI tools'
-          : 'Answered by the rule-based fallback (no model key configured)'
+          : 'Rule-based guidance from the Saans advisory engine'
       }
     >
       <span className={`inline-block h-1.5 w-1.5 rounded-full ${isStrands ? 'bg-violet-600' : 'bg-slate-500'}`} />
-      AI: {isStrands ? 'Strands agent' : 'rule-based fallback'}
+      AI: {isStrands ? 'Strands agent' : 'Rule-based guidance'}
     </span>
   );
 }

@@ -28,6 +28,11 @@ async def _aq_service_error(_request, exc):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
+@app.exception_handler(ValueError)
+async def _value_error(_request, exc):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
 # ---------------------------------------------------------------- models
 
 class SchoolIn(BaseModel):
@@ -36,6 +41,22 @@ class SchoolIn(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
     contact: str | None = None
+    hours: dict | None = None  # {"start": "08:00", "end": "15:00"} IST
+    days: list[int] | None = None  # 0=Mon..6=Sun, default Mon–Sat
+    pt_duration_min: int | None = Field(default=None, ge=15, le=180)
+
+
+class ActionIn(BaseModel):
+    action: str = Field(..., min_length=1)
+    recorded_by: str = Field(..., min_length=1, max_length=80)
+    reason: str | None = Field(default=None, max_length=280)
+    date: str | None = None  # YYYY-MM-DD, defaults to today IST
+
+
+class PlanIn(BaseModel):
+    activity: str = Field(default="PT", max_length=40)
+    duration_min: int | None = Field(default=None, ge=15, le=180)
+    preferred: str | None = Field(default=None, pattern="^(morning|afternoon)$")
 
 
 class ChatIn(BaseModel):
@@ -51,6 +72,21 @@ def _latlon(lat: float = Query(..., ge=-90, le=90),
 
 
 # ---------------------------------------------------------------- health
+
+def _public_school(school, include_private=False):
+    """Mask contact details in list views (privacy); full record on get."""
+    s = dict(school)
+    if not include_private:
+        s.pop("contact", None)
+        masked = []
+        for sub in s.get("subscriptions", []):
+            sub = dict(sub)
+            t = sub.get("target", "")
+            sub["target"] = (t[:3] + "…" + t[-2:]) if len(t) > 5 else "…"
+            masked.append(sub)
+        s["subscriptions"] = masked
+    return s
+
 
 @app.get("/api/health")
 def health():
@@ -108,16 +144,45 @@ def aqi_forecast(lat: float = Query(..., ge=-90, le=90),
 
 @app.get("/api/advisory")
 def get_advisory(lat: float = Query(..., ge=-90, le=90),
-                 lon: float = Query(..., ge=-180, le=180)):
+                 lon: float = Query(..., ge=-180, le=180),
+                 demo: str | None = Query(default=None)):
+    """School-day advisory. ``demo=<scenario>`` returns scripted demo data
+    (normal_day | indoor_day | worsening | outage) — no upstream calls, no
+    writes, clearly labelled."""
+    if demo:
+        from . import demo as demo_mod
+        adv = demo_mod.demo_scenario(demo)  # ValueError -> 422, AQServiceError -> 503
+        return {
+            "call": {"level": adv["level"], "label": adv["action_label"],
+                     "headline": adv["headline"], "detail": adv["detail"]},
+            "aqi_now": adv["aqi_now"],
+            "category": adv["category"],
+            "color": adv["color"],
+            "dominant": adv["dominant"],
+            "peak_6h": adv["peak_6h"],
+            "best_windows": adv["best_windows"],
+            "windows_note": adv["windows_note"],
+            "evidence": adv["evidence"],
+            "wind": adv["wind"],
+            "generated_at": adv["generated_at"],
+            "demo": True,
+            "demo_scenario": demo,
+            "alerts": adv["alerts"],
+        }
     adv = advisory.school_advisory(lat, lon)
     return {
-        "call": {"level": adv["level"], "headline": adv["headline"],
-                 "detail": adv["detail"]},
+        "call": {"level": adv["level"], "label": adv["action_label"],
+                 "headline": adv["headline"], "detail": adv["detail"]},
         "aqi_now": adv["aqi_now"],
+        "category": adv["category"],
         "peak_6h": adv["peak_6h"],
         "best_windows": adv["best_windows"],
+        "windows_note": adv["windows_note"],
+        "evidence": adv["evidence"],
         "wind": adv["wind"],
         "generated_at": adv["generated_at"],
+        "source": adv["source"],
+        "data_status": adv["data_status"],
     }
 
 
@@ -132,12 +197,15 @@ def get_alerts(lat: float = Query(..., ge=-90, le=90),
 
 @app.post("/api/schools", status_code=201)
 def create_school(body: SchoolIn):
-    return stores.create(body.name, body.city, body.lat, body.lon, body.contact)
+    return _public_school(stores.create(
+        body.name, body.city, body.lat, body.lon, body.contact,
+        hours=body.hours, days=body.days,
+        pt_duration_min=body.pt_duration_min), include_private=True)
 
 
 @app.get("/api/schools")
 def list_schools():
-    return {"schools": stores.list_all()}
+    return {"schools": [_public_school(s) for s in stores.list_all()]}
 
 
 @app.get("/api/schools/{school_id}")
@@ -145,7 +213,7 @@ def get_school(school_id: str):
     school = stores.get(school_id)
     if not school:
         raise HTTPException(404, "School not found")
-    return school
+    return _public_school(school, include_private=True)
 
 
 class SubscriptionIn(BaseModel):
@@ -228,24 +296,100 @@ def delete_school(school_id: str):
 
 
 @app.get("/api/schools/{school_id}/bulletin")
-def school_bulletin(school_id: str):
+def school_bulletin(school_id: str, lang: str = Query(default="en")):
+    from . import i18n as i18n_mod
     school = stores.get(school_id)
     if not school:
         raise HTTPException(404, "School not found")
-    adv = advisory.school_advisory(school["lat"], school["lon"])
+    # School-aware advisory: windows respect this school's hours/days.
+    adv = advisory.school_advisory(school["lat"], school["lon"], school=school)
     from datetime import datetime
-    return {
-        "school": {"id": school["id"], "name": school["name"], "city": school["city"]},
+    aq_data = data.fetch_air_quality(school["lat"], school["lon"])
+    rows = advisory.hourly_series(aq_data)
+    plan = advisory.plan_activity(
+        rows[aq_data["current_idx"]:], school=school, activity="PT")
+    bulletin = {
+        "school": {"id": school["id"], "name": school["name"],
+                   "city": school["city"]},
         "date": datetime.now(IST).date().isoformat(),
-        "call": {"level": adv["level"], "headline": adv["headline"],
-                 "detail": adv["detail"]},
+        "call": {"level": adv["level"], "label": adv["action_label"],
+                 "headline": adv["headline"], "detail": adv["detail"]},
         "aqi_now": adv["aqi_now"],
         "category": adv["category"],
+        "color": adv["color"],
+        "dominant": adv["dominant"],
         "peak_today": adv["peak_today"],
         "best_windows": adv["best_windows"],
+        "windows_note": adv["windows_note"],
+        "activity_plan": plan,
         "checklist": adv["checklist"],
+        "disclaimer": adv["disclaimer"],
+        "evidence": adv["evidence"],
         "generated_at": adv["generated_at"],
+        "source": adv["source"],
+        "data_status": adv["data_status"],
+        "lang": "en",
     }
+    return i18n_mod.translate_bulletin(bulletin, lang)
+
+
+@app.post("/api/schools/{school_id}/actions", status_code=201)
+def record_teacher_action(school_id: str, body: ActionIn):
+    """Record a teacher acknowledgement for today's guidance.
+
+    Idempotent per (date, action): repeats return the existing record.
+    """
+    from datetime import datetime
+    date = body.date or datetime.now(IST).date().isoformat()
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(422, "date must be YYYY-MM-DD")
+    school = stores.get(school_id)
+    if not school:
+        raise HTTPException(404, "School not found")
+    adv_version = None
+    try:
+        adv = advisory.school_advisory(school["lat"], school["lon"], school=school)
+        adv_version = f"{adv['level']}@{adv['generated_at']}"
+    except AQServiceError:
+        adv_version = None  # outage: still record the acknowledgement
+    try:
+        record, created = stores.record_action(
+            school_id, body.action, body.recorded_by, reason=body.reason,
+            date=date, advisory_version=adv_version)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {"action": record, "created": created,
+            "action_types": stores.ACTION_LABELS}
+
+
+@app.get("/api/schools/{school_id}/actions")
+def teacher_action_history(school_id: str,
+                           date: str | None = Query(default=None)):
+    school = stores.get(school_id)
+    if not school:
+        raise HTTPException(404, "School not found")
+    history = stores.get_actions(school_id, date=date)
+    return {"school_id": school_id, "date": date, "actions": history,
+            "action_types": stores.ACTION_LABELS}
+
+
+@app.post("/api/schools/{school_id}/plan")
+def plan_school_activity(school_id: str, body: PlanIn):
+    """Recommend a practical outdoor slot for an activity, or an indoor
+    alternative — respecting school hours, days, and activity duration."""
+    school = stores.get(school_id)
+    if not school:
+        raise HTTPException(404, "School not found")
+    aq_data = data.fetch_air_quality(school["lat"], school["lon"])
+    rows = advisory.hourly_series(aq_data)
+    plan = advisory.plan_activity(
+        rows[aq_data["current_idx"]:], school=school,
+        activity=body.activity, duration_min=body.duration_min,
+        preferred=body.preferred)
+    return dict(plan, generated_at=advisory.datetime.now(advisory.IST).isoformat(),
+                data_status=advisory.DATA_STATUS)
 
 
 # ---------------------------------------------------------------- agent

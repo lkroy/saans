@@ -4,6 +4,7 @@ import { categoryColor, fmtDateLong, fmtDayHour, fmtHour, textOn } from '../lib/
 import { ErrorState, SkeletonCard } from '../components/Feedback';
 import AdvisoryBanner from '../components/AdvisoryBanner';
 import BestWindows from '../components/BestWindows';
+import EvidenceCard from '../components/EvidenceCard';
 
 /* ---------------- Add-school form ---------------- */
 
@@ -11,6 +12,10 @@ function AddSchoolForm({ onAdded }: { onAdded: (s: School) => void }) {
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
   const [contact, setContact] = useState('');
+  const [hoursStart, setHoursStart] = useState('08:00');
+  const [hoursEnd, setHoursEnd] = useState('15:00');
+  const [days, setDays] = useState<number[]>([0, 1, 2, 3, 4, 5]);
+  const [ptDuration, setPtDuration] = useState('40');
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -72,6 +77,9 @@ function AddSchoolForm({ onAdded }: { onAdded: (s: School) => void }) {
         lat: coords.lat,
         lon: coords.lon,
         ...(contact.trim() ? { contact: contact.trim() } : {}),
+        hours: { start: hoursStart, end: hoursEnd },
+        days,
+        pt_duration_min: Math.max(15, Math.min(180, parseInt(ptDuration, 10) || 40)),
       });
       onAdded(school);
       setName('');
@@ -145,6 +153,43 @@ function AddSchoolForm({ onAdded }: { onAdded: (s: School) => void }) {
             className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink focus:ring-2 focus:ring-ink/10"
           />
         </label>
+        <div className="grid gap-4 sm:col-span-2 sm:grid-cols-3">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">School hours (IST)</span>
+            <div className="mt-1.5 flex items-center gap-2">
+              <input type="time" value={hoursStart} onChange={(e) => setHoursStart(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-ink" />
+              <span className="text-slate-400">–</span>
+              <input type="time" value={hoursEnd} onChange={(e) => setHoursEnd(e.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-ink" />
+            </div>
+          </label>
+          <div>
+            <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">School days</span>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setDays((prev) => prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i].sort())}
+                  className={`flex h-9 w-9 items-center justify-center rounded-lg text-xs font-bold ${days.includes(i) ? 'bg-ink text-white' : 'border border-slate-300 text-slate-600'}`}
+                  aria-pressed={days.includes(i)}
+                  title={['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][i]}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Typical PT duration (min)</span>
+            <input
+              type="number" min={15} max={180} value={ptDuration}
+              onChange={(e) => setPtDuration(e.target.value)}
+              className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink focus:ring-2 focus:ring-ink/10"
+            />
+          </label>
+        </div>
       </div>
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
       <button
@@ -163,11 +208,15 @@ function AddSchoolForm({ onAdded }: { onAdded: (s: School) => void }) {
 function BulletinView({ school, onBack }: { school: School; onBack: () => void }) {
   const [bulletin, setBulletin] = useState<Bulletin | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [lang, setLang] = useState<'en' | 'hi'>('en');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    setBulletin(null);
+    setError(null);
     api
-      .bulletin(school.id)
+      .bulletin(school.id, lang)
       .then((b) => {
         if (!cancelled) setBulletin(b);
       })
@@ -177,9 +226,48 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
     return () => {
       cancelled = true;
     };
-  }, [school.id]);
+  }, [school.id, lang]);
 
   const color = bulletin ? categoryColor(bulletin.category) : '#64748b';
+  const s = bulletin?.strings;
+
+  const bulletinText = () => {
+    if (!bulletin) return '';
+    const lines = [
+      `${s?.bulletin_title ?? 'Saans · Morning air-safety bulletin'} — ${bulletin.school.name}`,
+      `${bulletin.school.city} · ${bulletin.date}`,
+      '',
+      `${bulletin.call.label ?? ''}: ${bulletin.call.headline}`,
+      `AQI now: ${bulletin.aqi_now} (${bulletin.category})`,
+      bulletin.activity_plan ? `Plan: ${bulletin.activity_plan.reason}` : '',
+      '',
+      ...(bulletin.checklist.map((c, i) => `${i + 1}. ${c}`)),
+      '',
+      bulletin.disclaimer,
+    ];
+    return lines.filter(Boolean).join('\n');
+  };
+
+  const copyBulletin = async () => {
+    try {
+      await navigator.clipboard.writeText(bulletinText());
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
+  const shareBulletin = async () => {
+    const text = bulletinText();
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `Saans bulletin — ${bulletin?.school.name}`, text });
+      } catch { /* dismissed */ }
+    } else {
+      copyBulletin();
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -191,15 +279,40 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
           ← All schools
         </button>
         {bulletin && (
-          <button
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-          >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z" />
-            </svg>
-            Print bulletin
-          </button>
+          <>
+            <div className="flex rounded-xl border border-slate-300 bg-white p-0.5 text-sm font-semibold shadow-sm">
+              {(['en', 'hi'] as const).map((l) => (
+                <button
+                  key={l}
+                  onClick={() => setLang(l)}
+                  className={`rounded-lg px-3 py-1.5 ${lang === l ? 'bg-ink text-white' : 'text-slate-600'}`}
+                >
+                  {l === 'en' ? 'English' : 'हिंदी'}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={copyBulletin}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              {copied ? 'Copied ✓' : 'Copy text'}
+            </button>
+            <button
+              onClick={shareBulletin}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
+              Share
+            </button>
+            <button
+              onClick={() => window.print()}
+              className="flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+            >
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z" />
+              </svg>
+              Print bulletin
+            </button>
+          </>
         )}
       </div>
 
@@ -216,7 +329,7 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
             <div>
               <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
-                Saans · Morning air-safety bulletin
+                {s?.bulletin_title ?? 'Saans · Morning air-safety bulletin'}
               </p>
               <h1 className="mt-1 text-2xl font-extrabold text-ink">{bulletin.school.name}</h1>
               <p className="text-sm text-slate-500">
@@ -233,6 +346,10 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
               </span>
             </div>
           </div>
+          <p className="mt-2 text-[11px] font-bold text-slate-500">
+            <span className="rounded-full bg-slate-100 px-2.5 py-1">Indicative · modelled</span>{' '}
+            <span className="font-normal">hourly estimate, not an official CPCB 24-hour value</span>
+          </p>
 
           <div className="mt-5">
             <AdvisoryBanner call={bulletin.call} />
@@ -240,24 +357,36 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Today's peak</p>
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-500">{s?.todays_peak ?? "Today's peak"}</p>
               <p className="mt-1 text-lg font-extrabold text-ink">
                 AQI {bulletin.peak_today.aqi}{' '}
                 <span className="text-sm font-medium text-slate-500">around {fmtHour(bulletin.peak_today.at)}</span>
               </p>
             </div>
             <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Generated</p>
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-500">{s?.generated ?? 'Generated'}</p>
               <p className="mt-1 text-sm font-medium text-slate-700">{fmtDayHour(bulletin.generated_at)}</p>
             </div>
           </div>
 
+          {bulletin.activity_plan && (
+            <div className="mt-5 rounded-xl border border-sky-200 bg-sky-50 p-4">
+              <p className="text-xs font-bold uppercase tracking-widest text-sky-700">Activity plan · {bulletin.activity_plan.activity}</p>
+              <p className="mt-1.5 text-sm font-semibold text-ink">
+                {bulletin.activity_plan.recommendation === 'outdoor_slot' && bulletin.activity_plan.slot
+                  ? `Outdoors ${fmtHour(bulletin.activity_plan.slot.start)}–${fmtHour(bulletin.activity_plan.slot.end)}`
+                  : 'Hold indoors'}
+              </p>
+              <p className="mt-1 text-sm text-slate-700">{bulletin.activity_plan.reason}</p>
+            </div>
+          )}
+
           <div className="mt-5">
-            <BestWindows windows={bulletin.best_windows} />
+            <BestWindows windows={bulletin.best_windows} note={bulletin.windows_note} />
           </div>
 
           <div className="mt-5">
-            <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">Today's checklist</h2>
+            <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">{s?.checklist_title ?? "Today's checklist"}</h2>
             <ul className="mt-3 space-y-2.5">
               {bulletin.checklist.map((item, i) => (
                 <li key={i} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3.5">
@@ -271,14 +400,235 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
             </ul>
           </div>
 
-          <p className="mt-6 border-t border-slate-200 pt-4 text-xs text-slate-400">
-            Indicative hourly AQI · modelled data (Open-Meteo). Post near the school office noticeboard.
+          <p className="mt-6 border-t border-slate-200 pt-4 text-xs leading-relaxed text-slate-500">
+            {bulletin.disclaimer}
+          </p>
+          <p className="mt-2 text-xs text-slate-400">
+            {s?.indicative_note ?? 'Indicative hourly AQI · modelled data (Open-Meteo). Post near the school office noticeboard.'}
           </p>
         </article>
       )}
 
+      {bulletin?.evidence && (
+        <EvidenceCard evidence={bulletin.evidence} />
+      )}
+
+      {bulletin && <ActionLogPanel schoolId={school.id} />}
+
+      {bulletin && <PlannerPanel schoolId={school.id} />}
+
       {bulletin && <SubscribePanel schoolId={school.id} />}
     </div>
+  );
+}
+
+/* ---------------- Teacher acknowledgement + action log ---------------- */
+
+const ACTION_KEYS = [
+  'guidance_reviewed',
+  'pt_moved_indoors',
+  'assembly_rescheduled',
+  'outdoor_rescheduled',
+  'unable_to_implement',
+] as const;
+
+function ActionLogPanel({ schoolId }: { schoolId: string }) {
+  const [actions, setActions] = useState<import('../lib/api').ActionRecord[]>([]);
+  const [types, setTypes] = useState<Record<string, string>>({});
+  const [name, setName] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const load = useCallback(() => {
+    api
+      .actionHistory(schoolId, today)
+      .then((r) => {
+        setActions(r.actions);
+        setTypes(r.action_types);
+      })
+      .catch(() => {});
+  }, [schoolId, today]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const doneToday = new Set(actions.map((a) => a.action));
+
+  const record = async (action: string) => {
+    if (!name.trim()) {
+      setMsg('Please enter your name so the log shows who acknowledged.');
+      return;
+    }
+    setBusy(action);
+    setMsg(null);
+    try {
+      const r = await api.recordAction(schoolId, action, name.trim(), reason.trim() || undefined);
+      if (r.created) {
+        setMsg(`Recorded: ${r.action.label}.`);
+      } else {
+        setMsg('Already recorded today — no duplicate entry created.');
+      }
+      setReason('');
+      load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Could not record the action.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="no-print rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+        Teacher acknowledgement · today
+      </h2>
+      <p className="mt-1 text-sm text-slate-600">
+        Record what the school did with today's guidance. One entry per action per day.
+      </p>
+
+      <label className="mt-4 block max-w-xs">
+        <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Your name</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Meera Sharma"
+          className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink"
+        />
+      </label>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {ACTION_KEYS.map((k) => (
+          <button
+            key={k}
+            onClick={() => record(k)}
+            disabled={busy !== null || doneToday.has(k)}
+            className={`rounded-xl px-4 py-2 text-sm font-semibold ${
+              doneToday.has(k)
+                ? 'bg-emerald-100 text-emerald-800'
+                : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50'
+            }`}
+          >
+            {doneToday.has(k) ? '✓ ' : ''}
+            {types[k] ?? k}
+            {busy === k ? '…' : ''}
+          </button>
+        ))}
+      </div>
+
+      {ACTION_KEYS.includes('unable_to_implement') && (
+        <label className="mt-3 block max-w-md">
+          <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Reason <span className="font-normal normal-case">(for "Unable to implement", optional)</span>
+          </span>
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. no indoor hall available"
+            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink"
+          />
+        </label>
+      )}
+
+      {msg && <p className="mt-3 text-sm text-slate-700">{msg}</p>}
+
+      {actions.length > 0 && (
+        <div className="mt-5">
+          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">Today's log</h3>
+          <ul className="mt-2 space-y-1.5">
+            {actions.map((a, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+                <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">✓</span>
+                <span className="font-semibold text-ink">{a.label}</span>
+                <span className="text-slate-500">by {a.recorded_by}</span>
+                {a.reason && <span className="text-slate-500">— {a.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ---------------- Activity planner ---------------- */
+
+function PlannerPanel({ schoolId }: { schoolId: string }) {
+  const [activity, setActivity] = useState('PT');
+  const [duration, setDuration] = useState('40');
+  const [preferred, setPreferred] = useState<'any' | 'morning' | 'afternoon'>('any');
+  const [plan, setPlan] = useState<import('../lib/api').ActivityPlan | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const p = await api.planActivity(
+        schoolId,
+        activity.trim() || 'PT',
+        Math.max(15, Math.min(180, parseInt(duration, 10) || 40)),
+        preferred === 'any' ? undefined : preferred,
+      );
+      setPlan(p);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not plan the activity.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="no-print rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">
+        Activity planner
+      </h2>
+      <p className="mt-1 text-sm text-slate-600">
+        Find a practical slot inside school hours — or get an indoor alternative with the reason.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Activity</span>
+          <input value={activity} onChange={(e) => setActivity(e.target.value)}
+            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink" />
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Duration (min)</span>
+          <input type="number" min={15} max={180} value={duration} onChange={(e) => setDuration(e.target.value)}
+            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink" />
+        </label>
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">Preferred</span>
+          <select value={preferred} onChange={(e) => setPreferred(e.target.value as 'any' | 'morning' | 'afternoon')}
+            className="mt-1.5 w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm outline-none focus:border-ink">
+            <option value="any">Any time</option>
+            <option value="morning">Morning</option>
+            <option value="afternoon">Afternoon</option>
+          </select>
+        </label>
+        <div className="flex items-end">
+          <button onClick={run} disabled={busy}
+            className="w-full rounded-xl bg-ink px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
+            {busy ? 'Planning…' : 'Find a slot'}
+          </button>
+        </div>
+      </div>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+      {plan && (
+        <div className={`mt-4 rounded-xl p-4 ${plan.recommendation === 'outdoor_slot' ? 'bg-emerald-50 border border-emerald-200' : 'bg-amber-50 border border-amber-200'}`}>
+          <p className="text-sm font-extrabold text-ink">
+            {plan.recommendation === 'outdoor_slot' && plan.slot
+              ? `Outdoors ${fmtHour(plan.slot.start)}–${fmtHour(plan.slot.end)} (AQI ~${plan.slot.aqi})`
+              : 'Hold indoors'}
+          </p>
+          <p className="mt-1 text-sm text-slate-700">{plan.reason}</p>
+        </div>
+      )}
+    </section>
   );
 }
 

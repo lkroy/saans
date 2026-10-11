@@ -11,13 +11,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { api, type AdvisoryResponse, type CurrentAqi, type ForecastResponse, type PollutantMap } from '../lib/api';
+import { api, type AdvisoryResponse, type Category, type CurrentAqi, type ForecastResponse, type PollutantMap } from '../lib/api';
 import { useLocation } from '../lib/location';
 import { categoryColor, fmtDateTime, fmtHour, textOn } from '../lib/utils';
 import CitySearch from '../components/CitySearch';
 import AQIGauge from '../components/AQIGauge';
 import PollutantCard from '../components/PollutantCard';
 import AdvisoryBanner from '../components/AdvisoryBanner';
+import EvidenceCard from '../components/EvidenceCard';
 import WindCard from '../components/WindCard';
 import BestWindows from '../components/BestWindows';
 import AlertList from '../components/AlertList';
@@ -143,12 +144,15 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
 
+  // ?demo=<scenario> renders a clearly labelled scripted scenario (demo video).
+  const demo = new URLSearchParams(window.location.search).get('demo') || undefined;
+
   const load = useCallback(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     const { lat, lon } = location;
-    Promise.all([api.currentAqi(lat, lon), api.forecast(lat, lon, 48), api.advisory(lat, lon), api.alerts(lat, lon)])
+    Promise.all([api.currentAqi(lat, lon), api.forecast(lat, lon, 48), api.advisory(lat, lon, demo), api.alerts(lat, lon)])
       .then(([c, f, a, al]) => {
         if (cancelled) return;
         setCurrent(c);
@@ -165,7 +169,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [location, attempt]);
+  }, [location, attempt, demo]);
 
   useEffect(() => load(), [load]);
 
@@ -196,6 +200,21 @@ export default function Dashboard() {
     co: 'CO',
   } as const;
 
+  // Demo mode: keep every number consistent with the scripted scenario.
+  const shown: CurrentAqi = advisory.demo
+    ? {
+        aqi: advisory.aqi_now,
+        category: advisory.category as Category,
+        color: advisory.color ?? '#64748b',
+        dominant: (advisory.dominant ?? 'pm2_5') as keyof PollutantMap,
+        pollutants: {} as PollutantMap,
+        updated_at: advisory.generated_at,
+        source: 'demo scenario (scripted)',
+        data_status: 'demo',
+      }
+    : current;
+  const shownAlerts = advisory.demo && advisory.alerts ? advisory.alerts : alerts.alerts;
+
   return (
     <div className="space-y-6">
       <CitySearch />
@@ -204,8 +223,20 @@ export default function Dashboard() {
         <h1 className="text-2xl font-extrabold tracking-tight text-ink sm:text-3xl">
           Air safety in {location.label.split(',')[0]}
         </h1>
-        <p className="text-xs text-slate-500">Updated {fmtDateTime(current.updated_at)}</p>
+        <p className="text-xs text-slate-500">Updated {fmtDateTime(shown.updated_at)}</p>
       </div>
+
+      {advisory.demo && (
+        <div className="rounded-xl border-2 border-dashed border-violet-400 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-800">
+          Demo scenario: {advisory.demo_scenario} — scripted data, not live readings. No real records or notifications are affected.
+        </div>
+      )}
+
+      {advisory.evidence?.stale && !advisory.demo && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Data may be stale — the newest model data is over 3 hours old. Treat today's call with extra caution.
+        </div>
+      )}
 
       <AdvisoryBanner call={advisory.call} />
 
@@ -213,30 +244,39 @@ export default function Dashboard() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">Current AQI</h3>
-          <AQIGauge aqi={current.aqi} category={current.category} />
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">Current AQI</h3>
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600" title="Hourly modelled estimate, not an official CPCB 24-hour value">
+              Indicative · modelled
+            </span>
+          </div>
+          <AQIGauge aqi={shown.aqi} category={shown.category} />
           <p className="mt-2 text-center text-sm text-slate-600">
             Dominant pollutant:{' '}
-            <span className="font-bold text-ink">{domMeta[current.dominant]}</span>
+            <span className="font-bold text-ink">{domMeta[shown.dominant]}</span>
           </p>
         </section>
 
         <div className="space-y-6 lg:col-span-2">
-          <BestWindows windows={advisory.best_windows} />
-          <AlertList alerts={alerts.alerts} />
+          <BestWindows windows={advisory.best_windows} note={advisory.windows_note} />
+          <AlertList alerts={shownAlerts} />
         </div>
       </div>
 
+      <EvidenceCard evidence={advisory.evidence} />
+
+{!advisory.demo && (
       <section>
         <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-slate-500">Pollutant breakdown</h3>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
           {POLLUTANT_ORDER.map((p) => (
-            <PollutantCard key={p} pollutant={p} value={current.pollutants[p]} dominant={current.dominant} />
+            <PollutantCard key={p} pollutant={p} value={shown.pollutants[p]} dominant={shown.dominant} />
           ))}
         </div>
       </section>
+      )}
 
-      <ForecastChart data={forecast} />
+      {!advisory.demo && <ForecastChart data={forecast} />}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-4 text-sm text-slate-600 sm:grid-cols-3">
@@ -245,11 +285,11 @@ export default function Dashboard() {
             <p className="mt-1 flex items-center gap-2">
               <span
                 className="inline-block rounded-full px-2.5 py-0.5 text-xs font-extrabold"
-                style={{ backgroundColor: current.color, color: textOn(current.color) }}
+                style={{ backgroundColor: shown.color, color: textOn(shown.color) }}
               >
-                {current.aqi}
+                {shown.aqi}
               </span>
-              {current.category}
+              {shown.category}
             </p>
           </div>
           <div>
@@ -261,7 +301,7 @@ export default function Dashboard() {
           </div>
           <div>
             <p className="font-bold text-ink">Data source</p>
-            <p className="mt-1">{current.source}</p>
+            <p className="mt-1">{shown.source}</p>
           </div>
         </div>
       </section>

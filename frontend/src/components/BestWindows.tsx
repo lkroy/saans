@@ -11,13 +11,13 @@ function windowCategory(aqi: number): Category {
   return 'Severe';
 }
 
-export default function BestWindows({ windows }: { windows: BestWindow[] }) {
+export default function BestWindows({ windows, note }: { windows: BestWindow[]; note?: string | null }) {
   if (windows.length === 0) {
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-sm font-bold uppercase tracking-widest text-slate-500">Best outdoor windows</h3>
         <p className="mt-2 text-sm text-slate-600">
-          No clean window of 2+ hours in the next 24 hours — plan outdoor activities indoors today.
+          {note ?? 'No suitable outdoor window during school hours — plan outdoor activities indoors today.'}
         </p>
       </section>
     );

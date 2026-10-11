@@ -35,11 +35,12 @@ const LEVEL_LABEL: Record<CallLevel, string> = {
   clear: 'All clear',
   caution: 'Caution',
   indoor: 'Indoor day',
-  severe: 'Severe',
+  severe: 'Emergency day', // distinct from the CPCB pollution category "Severe" (401+)
 };
 
 export default function AdvisoryBanner({ call }: { call: AdvisoryCall }) {
   const s = LEVEL_STYLE[call.level];
+  const label = call.label || LEVEL_LABEL[call.level];
   return (
     <section className={`rounded-2xl border-l-8 ${s.border} ${s.bg} p-5 shadow-sm`} aria-live="polite">
       <div className="flex flex-wrap items-center gap-3">
@@ -48,7 +49,7 @@ export default function AdvisoryBanner({ call }: { call: AdvisoryCall }) {
         </span>
         <div>
           <p className={`text-xs font-bold uppercase tracking-widest ${s.badgeText === 'text-white' ? 'text-slate-600' : 'text-slate-600'}`}>
-            Today's call · {LEVEL_LABEL[call.level]}
+            Today's call · {label}
           </p>
           <h2 className="text-xl font-extrabold text-ink sm:text-2xl">{call.headline}</h2>
         </div>

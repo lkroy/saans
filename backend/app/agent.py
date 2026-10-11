@@ -25,8 +25,11 @@ SYSTEM_PROMPT = (
     "- Ground EVERY claim about air quality in the output of your tools. Never invent AQI numbers.\n"
     "- Use the get_school_advisory tool for school-day decisions; it already combines current AQI, "
     "the 6-hour forecast peak, and the school checklist.\n"
+    "- Timing questions ('morning PT', 'afternoon sports', 'tomorrow') must be answered from the "
+    "best_windows the tool returns, filtered to the requested part of day and the school's "
+    "operating hours. Never recommend an evening window for a morning question.\n"
     "- Answer in plain, short English. If the user writes in Hindi or Hinglish, reply in the same style.\n"
-    "- Keep answers short and actionable.\n"
+    "- Keep answers short and actionable. Write times like '10 AM', never raw ISO timestamps.\n"
     "- On medical questions (asthma, breathing trouble, inhalers, allergies), add exactly one line: "
     "\"I'm not a doctor — please check with your child's paediatrician for medical advice.\"\n"
     "- AQI numbers here are indicative hourly model values (Open-Meteo), not official CPCB 24-hour averages; "
@@ -140,25 +143,80 @@ def _extract_text(result):
     return text
 
 
+def _fmt_time(iso):
+    """'2026-10-11T10:00:00+05:30' -> '10 AM'."""
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(iso).strftime("%-I %p")
+    except (ValueError, TypeError):
+        return iso
+
+
+_TIMING_WORDS = {
+    "morning": ("morning", ("morning", "subah", "am ", "a.m.", "pt ", "assembly")),
+    "afternoon": ("afternoon", ("afternoon", "dopahar", "pm ", "p.m.", "sports", "games")),
+}
+
+
+def _detect_preferred(message):
+    msg_l = (message or "").lower()
+    for preferred, words in _TIMING_WORDS.values():
+        if any(w in msg_l for w in words):
+            return preferred
+    return None
+
+
+def _detect_duration(message):
+    import re
+    m = re.search(r"(\d{2,3})\s*(min|minute)", (message or "").lower())
+    if m:
+        return max(15, min(int(m.group(1)), 180))
+    return None
+
+
 def _fallback_reply(message, lat, lon, note=None):
-    """Rule-based answer built from the advisory engine. Always transparent."""
+    """Rule-based answer built from the advisory engine. Always transparent.
+
+    Grounded in the same deterministic decision object as the dashboard and
+    bulletin — never invents readings or overrides thresholds.
+    """
     adv = advisory.school_advisory(lat, lon)
     lines = []
     if note:
         lines.append(note)
-    else:
-        lines.append("Rule-based fallback (no Gemini key configured) — "
-                     "answered directly from the Saans advisory engine:")
-    lines.append("")
-    lines.append(f"{adv['headline']}")
-    lines.append(f"Current AQI {adv['aqi_now']} ({adv['category']}), "
+    lines.append(f"**{adv['action_label']}** — {adv['headline']}")
+    lines.append(f"Indicative AQI {adv['aqi_now']} ({adv['category']}), "
                  f"dominant pollutant {adv['dominant']}. "
-                 f"6-hour peak: AQI {adv['peak_6h']['aqi']} at {adv['peak_6h']['at']}.")
-    if adv["best_windows"]:
-        w = adv["best_windows"][0]
-        lines.append(f"Cleanest window: {w['start']} → {w['end']} (AQI ~{w['aqi']}).")
-    lines.append("Checklist: " + "; ".join(adv["checklist"][:3]) + ".")
+                 f"6-hour peak: AQI {adv['peak_6h']['aqi']} around "
+                 f"{_fmt_time(adv['peak_6h']['at'])}.")
+
     msg_l = (message or "").lower()
+    timing_q = any(w in msg_l for w in
+                   ("when", "best time", "what time", "morning", "afternoon",
+                    "evening", "pt", "sports", "assembly", "outdoor", "play"))
+    if timing_q:
+        preferred = _detect_preferred(message)
+        duration = _detect_duration(message)
+        aq_data = data_mod.fetch_air_quality(lat, lon)
+        rows = advisory.hourly_series(aq_data)
+        plan = advisory.plan_activity(
+            rows[aq_data["current_idx"]:], school=None,
+            activity="outdoor activity", duration_min=duration,
+            preferred=preferred)
+        if plan["recommendation"] == "outdoor_slot":
+            s = plan["slot"]
+            lines.append(f"Best time: {_fmt_time(s['start'])}–{_fmt_time(s['end'])} "
+                         f"(AQI ~{s['aqi']}). {plan['reason']}")
+        else:
+            lines.append(plan["reason"])
+    elif adv["best_windows"]:
+        w = adv["best_windows"][0]
+        lines.append(f"Cleanest window in school hours: {_fmt_time(w['start'])}–"
+                     f"{_fmt_time(w['end'])} (AQI ~{w['aqi']}).")
+    elif adv["windows_note"]:
+        lines.append(adv["windows_note"] + ".")
+
+    lines.append("Checklist: " + "; ".join(adv["checklist"][:3]) + ".")
     if any(w in msg_l for w in MEDICAL_WORDS):
         lines.append("I'm not a doctor — please check with your child's "
                      "paediatrician for medical advice.")
@@ -192,8 +250,8 @@ def chat(message, lat, lon, history=None):
             result = agent(prompt)
             return _extract_text(result), "strands", sources
         except Exception as exc:  # transparent degradation, never a 500
-            note = (f"Note: the Gemini-backed agent failed ({type(exc).__name__}), "
-                    f"so this is a rule-based fallback answer from the advisory engine.")
+            note = ("Note: the AI agent was unavailable just now, so this is a "
+                    "rule-based answer from the advisory engine.")
             try:
                 return _fallback_reply(message, lat, lon, note=note), "fallback", sources
             except data_mod.AQServiceError:

@@ -78,7 +78,7 @@ saans/
 | Criterion | How Saans answers it |
 |---|---|
 | Idea & Impact | One small problem solved well: schools get a daily breathing protocol. |
-| Built on AWS | Strands Agents SDK (open source) + SAM serverless deploy design. |
+| Built on AWS | Strands Agents SDK (open source) + live SAM serverless deploy: Lambda, API Gateway, DynamoDB, EventBridge Scheduler, SNS. |
 | Design & usability | Plain-language calls, printable bulletin, chat in simple English/Hindi. |
 | Execution | One loop that runs on live data — verified endpoint by endpoint. |
 | Demo video | `docs/DEMO_SCRIPT.md` — a timed 3-minute arc. |
