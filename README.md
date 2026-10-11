@@ -59,7 +59,28 @@ Gemini key (Google AI Studio, no card): `GEMINI_API_KEY=...` in `backend/.env`
   ```bash
   cd infra && sam build && sam deploy --guided
   ```
-  Frontend ships as a static site → AWS Amplify Hosting (drag-and-drop `frontend/dist`).
+  Frontend ships as a static site → S3 + CloudFront (HTTPS).
+
+## Architecture (deployed stack)
+
+![Saans system architecture](docs/architecture.png)
+
+**Live:** app at `https://deiykeqflshnj.cloudfront.net` · API at
+`https://hcoa1wcio5.execute-api.ap-southeast-2.amazonaws.com` (region `ap-southeast-2`).
+
+- **Edge & hosting** — CloudFront CDN serves the React + TypeScript SPA from the
+  `saans-app-603890616642` S3 bucket. The browser calls the API directly (`fetch /api/*`).
+- **API** — API Gateway HTTP API proxy-invokes a single Lambda.
+- **Compute** — AWS Lambda (Python 3.12) runs FastAPI via Mangum. Modules:
+  `aqi.py` (CPCB AQI math), `advisory.py` (recommendation engine, school-aware
+  windows, wind explanations, demo modes), `agent.py` (Strands agent + rule-based
+  fallback), `stores.py` (school store, teacher action log), `i18n.py` (English/Hindi).
+- **Data & messaging** — DynamoDB (`saans-schools`) persists schools and the teacher
+  action log; SNS (`saans-alerts`) delivers SMS/email bulletins with confirmation opt-in.
+- **Scheduler** — EventBridge Scheduler fires the 5:30 AM IST bulletin run daily;
+  material-change detection means families are only pinged when the advice changes.
+- **External APIs** — Open-Meteo (air quality, 48h forecast, wind; no key required);
+  Google Gemini via the Strands Agents SDK powers Ask Saans chat.
 
 ## Repo layout
 
