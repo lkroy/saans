@@ -210,6 +210,29 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
   const [error, setError] = useState<unknown>(null);
   const [lang, setLang] = useState<'en' | 'hi'>('en');
   const [copied, setCopied] = useState(false);
+  const [checked, setChecked] = useState<number[]>([]);
+
+  // Persist checklist ticks per school per day (principal's own tracking).
+  useEffect(() => {
+    if (!bulletin) return;
+    try {
+      const raw = localStorage.getItem(`saans-checklist:${school.id}:${bulletin.date}`);
+      setChecked(raw ? JSON.parse(raw) : []);
+    } catch {
+      setChecked([]);
+    }
+  }, [school.id, bulletin?.date]);
+
+  const toggleCheck = (i: number) => {
+    if (!bulletin) return;
+    setChecked((prev) => {
+      const next = prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i];
+      try {
+        localStorage.setItem(`saans-checklist:${school.id}:${bulletin.date}`, JSON.stringify(next));
+      } catch { /* storage unavailable */ }
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -388,15 +411,30 @@ function BulletinView({ school, onBack }: { school: School; onBack: () => void }
           <div className="mt-5">
             <h2 className="text-sm font-bold uppercase tracking-widest text-slate-500">{s?.checklist_title ?? "Today's checklist"}</h2>
             <ul className="mt-3 space-y-2.5">
-              {bulletin.checklist.map((item, i) => (
-                <li key={i} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3.5">
-                  <span
-                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 border-slate-300"
-                    aria-hidden
-                  />
-                  <span className="text-sm text-slate-800">{item}</span>
-                </li>
-              ))}
+              {bulletin.checklist.map((item, i) => {
+                const done = checked.includes(i);
+                return (
+                  <li key={i}>
+                    <button
+                      onClick={() => toggleCheck(i)}
+                      aria-pressed={done}
+                      className={`flex w-full items-start gap-3 rounded-xl border p-3.5 text-left transition ${
+                        done ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span
+                        className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 text-sm font-extrabold ${
+                          done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-slate-300 text-transparent'
+                        }`}
+                        aria-hidden
+                      >
+                        ✓
+                      </span>
+                      <span className={`text-sm ${done ? 'text-slate-500 line-through' : 'text-slate-800'}`}>{item}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
